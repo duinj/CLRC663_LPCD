@@ -142,7 +142,6 @@ void reset_LPCD(){
   CLRC_write_reg(0x23, 0x5f); //stop timer
 }
 
-
 // ---------------------------------------------------------------------------
 // Command functions.
 // ---------------------------------------------------------------------------
@@ -161,8 +160,8 @@ void CLRC663_cmd_idle() {
 }
 
 // ---------------------------------------------------------------------------
-// Utility functions.
-//these are just for abstraction
+//  Utility functions.
+//  these are just for abstraction
 // ---------------------------------------------------------------------------
 void cancel_and_flush(){
   CLRC663_cmd_idle();
@@ -226,8 +225,8 @@ void CLRC663_AN11145_start_IQ_measurement() {
   nrf_delay_ms(50);
   CLRC_write_reg(CLRC663_REG_COMMAND, CLRC663_CMD_IDLE);            //idle mode as always before any config
   // disable IRQ0, IRQ1 interrupt sources
-  CLRC_write_reg(CLRC663_REG_IRQ0, 0x7F);
-  CLRC_write_reg(CLRC663_REG_IRQ1, 0x7F);
+  CLRC663_clear_irq0();
+  CLRC663_clear_irq1():
   CLRC_write_reg(CLRC663_REG_IRQ0EN, 0x00);
   CLRC_write_reg(CLRC663_REG_IRQ1EN, 0x00);
   CLRC_write_reg(CLRC663_REG_HOSTCTRL, CLRC_FIFO_FLUSH); // Flush FIFO
@@ -250,8 +249,7 @@ void CLRC663_AN11145_start_IQ_measurement() {
   CLRC_write_reg(CLRC663_REG_COMMAND, 0x01);       // bit 0 = lpcd start
   nrf_delay_ms(1600);                              // have to delay before going into idle again
 
-  CLRC_write_reg(CLRC663_REG_COMMAND, CLRC663_CMD_IDLE);
-  CLRC_write_reg(CLRC663_REG_FIFOCONTROL, CLRC_FIFO_FLUSH); // Flush FIFO
+  cancel_and_flush();
   CLRC_write_reg(CLRC663_REG_RCV, 0x12);        
 //TODO: dynamically change values in use with formula in lpcd_start function (from an11145)
   uint8_t i_result = CLRC_read_reg(CLRC663_REG_LPCD_I_RESULT);
@@ -260,17 +258,13 @@ void CLRC663_AN11145_start_IQ_measurement() {
   // CLRC663_PRINTF("%02x", q_result);
   
 }
-
-uint8_t calibvalue(uint8_t qvalue, uint8_t ivalue){
-
-}
-
+#define CALIBRATION 1
 //LPCD setup and go to standby. for nrf52840, the pushpull option is used and an irq has to be send as soon as a tag is detected. enable irq on nrf side if needed/wanted
 void lpcd_start() {
   
-  //calibration is supposed to happen once in a while. can this be assured automatically
+  //calibration is supposed to happen once in a while but it works as long as the CALI value is set to 1 and lpcd restarts after every measurement
   #if CALIBRATION
-  CLRC663_AN11145_start_IQ_measurement();
+    CLRC663_AN11145_start_IQ_measurement();
   #endif
   //calculation from nfc reader lib
   uint8_t q1val = 0x21 | ((0x1e & 0x30) << 2);
@@ -295,18 +289,15 @@ void lpcd_start() {
   while (!(CLRC_read_reg(0x23) == 0x9f))              //wait for t4 to start (bit 6 will clear)
     ;
   CLRC_write_reg(0x39, rxanabackup);
-  CLRC_write_reg(CLRC663_REG_COMMAND, CLRC663_CMD_IDLE);          
-  CLRC_write_reg(CLRC663_REG_FIFOCONTROL, CLRC_FIFO_FLUSH);
+  cancel_and_flush();
   CLRC663_clear_irq0();
   CLRC663_clear_irq1();
   CLRC_write_reg(CLRC663_REG_IRQ0EN, CLRC663_IRQ0EN_IDLE_IRQEN);                     //bit 4 = idleirq
   //Enable puhspull option of IRQ Pin, enable Pin itself, let LPCD propagate to global IRQ
   //might have to play with push pull option here. measure with oscillator if necessary
   CLRC_write_reg(CLRC663_REG_IRQ1EN, CLRC663_IRQ1EN_IRQ_PUSHPULL | CLRC663_IRQ1EN_LPCD_IRQEN | CLRC663_IRQ1EN_IRQ_PINEN);   
-
   //start mode and view short bursts @ antenna per oscillator
-  CLRC_write_reg(CLRC663_REG_COMMAND, 0x81);       //bit 7 = standby, bit 0 = lpcd
-  
+  CLRC_write_reg(CLRC663_REG_COMMAND, 0x81);       //bit 7 = standby, bit 0 = lpcd 
 }
 
 // ---------------------------------------------------------------------------
@@ -329,8 +320,7 @@ function to receive answer from any chip near the reader antenna
 */
 uint16_t CLRC663_iso14443a_WUPA_REQA(uint8_t instruction) {
 
-  CLRC663_cmd_idle();
-  CLRC_flushFIFO();
+  cancel_and_flush();
 
   // Set register such that we sent 7 bits, set DataEn such that we can send data.
   CLRC_write_reg(CLRC663_REG_TXDATANUM, 7 | CLRC663_TXDATANUM_DATAEN);
@@ -691,8 +681,7 @@ for most parts, manufacturer key will be used and key A is relevant (there are t
 uint8_t mifareAuth(uint8_t key_type, uint8_t blocknum,
     uint8_t *uid) {
 
-  CLRC663_cmd_idle();
-  CLRC_flushFIFO(); 
+  cancel_and_flush();
 
   CLRC_write_reg(CLRC663_REG_IRQ0EN, CLRC663_IRQ0_IDLE_IRQ | CLRC663_IRQ0_ERR_IRQ);
   CLRC_write_reg(CLRC663_REG_IRQ1EN, CLRC663_IRQ1_TIMER0_IRQ); // only trigger on timer for irq1
@@ -702,8 +691,7 @@ uint8_t mifareAuth(uint8_t key_type, uint8_t blocknum,
   CLRC663_clear_irq0();
   CLRC663_clear_irq1();
 
-  CLRC663_cmd_idle();
-  CLRC_flushFIFO();
+  cancel_and_flush();
 
   //send key type the block to be decrypted and the entire uid to fifo and afterwards use auth command (this one uses the key from above)
   uint8_t params[6] = {key_type, blocknum, uid[0], uid[1], uid[2], uid[3]}; 
@@ -734,7 +722,7 @@ uint8_t mifareAuth(uint8_t key_type, uint8_t blocknum,
   return (status & CLRC663_STATUS_CRYPTO1_ON) ? 1 : 0; 
 }
 
-//setting timers with one simple function , only t0
+//setting timers with one simple function , only t0, might want to implement a more comprehendible version
 void set_Timer_Register(uint16_t timerval) {
 
   CLRC_write_reg(CLRC663_REG_T0CONTROL, 0b10001);
@@ -767,7 +755,6 @@ void parse_ndef_msg(uint8_t *buf, uint16_t len) {
     }
     if (s[i] == 0xfe) {
       s[i] = '\0';
-
       break;
     }
   }
